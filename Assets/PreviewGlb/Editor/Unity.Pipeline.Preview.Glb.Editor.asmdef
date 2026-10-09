@@ -1,0 +1,19 @@
+{
+    "name": "Unity.Pipeline.Preview.Glb.Editor",
+    "rootNamespace": "Unity.Pipeline.Preview.Glb",
+    "references": [
+        "glTFast",
+        "glTFast.Export"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
