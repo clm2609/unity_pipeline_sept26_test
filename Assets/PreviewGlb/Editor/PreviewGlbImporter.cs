@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using GLTFast;
 using GLTFast.Export;
@@ -23,7 +25,7 @@ namespace Unity.Pipeline.Preview.Glb
     [ScriptedImporter(Version, "___preview_glb___", AllowCaching = true)]
     public sealed class PreviewGlbImporter : ScriptedImporter
     {
-        public const int Version = 1;
+        public const int Version = 2;
         public const string ArtifactName = "glb";
 
         // Unity's importer version tracking does not reliably reach non-primary artifacts.
@@ -129,6 +131,7 @@ namespace Unity.Pipeline.Preview.Glb
                     error = "glTFast failed to write the glb";
                     return false;
                 }
+                BlendCutoutMaterials(path);
 
                 error = null;
                 return true;
@@ -256,6 +259,37 @@ namespace Unity.Pipeline.Preview.Glb
             return copy;
         }
 
+        // The Unity Dashboard's web viewer ignores glTF's alphaMode MASK and draws alpha-clipped
+        // materials (leaves, grass, fences) as opaque quads. It does honor BLEND, so cut-out
+        // materials are exported as blended ones. Remove this once the viewer supports MASK.
+        static void BlendCutoutMaterials(string glbPath)
+        {
+            var bytes = File.ReadAllBytes(glbPath);
+            var jsonLength = BitConverter.ToInt32(bytes, 12);
+            var json = Encoding.UTF8.GetString(bytes, 20, jsonLength);
+            if (!json.Contains("\"alphaMode\":\"MASK\""))
+                return;
+
+            json = json.Replace("\"alphaMode\":\"MASK\"", "\"alphaMode\":\"BLEND\"");
+            json = Regex.Replace(json, ",\"alphaCutoff\":[-+0-9.eE]+|\"alphaCutoff\":[-+0-9.eE]+,", "");
+            var newJson = Encoding.UTF8.GetBytes(json.TrimEnd(' '));
+            var padded = (newJson.Length + 3) & ~3;
+            var rest = bytes.Length - 20 - jsonLength;
+
+            using var stream = new MemoryStream(12 + 8 + padded + rest);
+            using var writer = new BinaryWriter(stream);
+            writer.Write(0x46546C67); // "glTF"
+            writer.Write(2);
+            writer.Write(12 + 8 + padded + rest);
+            writer.Write(padded);
+            writer.Write(0x4E4F534A); // "JSON"
+            writer.Write(newJson);
+            for (var i = newJson.Length; i < padded; i++)
+                writer.Write((byte)' ');
+            writer.Write(bytes, 20 + jsonLength, rest);
+            File.WriteAllBytes(glbPath, stream.ToArray());
+        }
+
         // An import must finish synchronously. glTFast's public save is async, but its writer has a
         // synchronous path (the one its own editor menu uses) that completes without yielding.
         static bool SaveSync(GameObjectExport export, string path)
@@ -283,6 +317,8 @@ namespace Unity.Pipeline.Preview.Glb
                 Debug.LogError($"PreviewGlbImporter: asset not found: {assetPath}");
                 return false;
             }
+            // Picks up a changed importer version, so a stale cached artifact isn't reused.
+            AssetDatabase.Refresh();
             var artifactId = AssetDatabaseExperimental.ProduceArtifact(new ArtifactKey(guid, typeof(PreviewGlbImporter)));
             if (!artifactId.isValid || !AssetDatabaseExperimental.GetArtifactPaths(artifactId, out var paths))
             {
